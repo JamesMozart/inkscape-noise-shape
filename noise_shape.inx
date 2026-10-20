@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>Noise Shape</name>
+    <id>com.example.noiseshape</id>
+    <dependency type="executable" location="extensions">noise_shape.py</dependency>
+    <effect>
+        <object-type>all</object-type>
+        <effects-menu>
+            <submenu name="Generate from Path"/>
+        </effects-menu>
+    </effect>
+    <script>
+        <command location="inx" interpreter="python">noise_shape.py</command>
+    </script>
+    <param name="points" type="int" gui-text="Sample points (higher = smoother and more detailed curve, slower to compute)" min="12" max="200">60</param>
+    <param name="radius" type="float" gui-text="Base radius (larger = bigger shape)" min="10" max="500">80</param>
+    <param name="amplitude" type="float" gui-text="Noise amplitude (larger = more irregular, spikier outline)" min="1" max="200">30</param>
+    <param name="scale" type="float" gui-text="Noise scale (larger = finer, higher-frequency detail; smaller = broad smooth lumps)" min="0.1" max="50">1.2</param>
+    <param name="seed" type="int" gui-text="Random seed (same seed + same settings reproduce the same shape; change it for a different shape)" min="1" max="2147483647">42</param>
+</inkscape-extension>
