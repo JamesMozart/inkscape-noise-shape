@@ -1,6 +1,6 @@
 # Inkscape Noise Shape
 
-Generates a random closed path shape using 2D Simplex Noise. Usable for generating:
+Generates a random closed path shape using 2D Simplex Noise. Useful for generating:
 - Organic shapes such as clouds, ink blots, cells, and island outlines
 - Explosion or spike effects (large amplitude + high scale)
 - Rough edges and torn-paper borders (high sample points + high scale)
