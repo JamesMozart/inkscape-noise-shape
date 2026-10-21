@@ -13,8 +13,17 @@
         <command location="inx" interpreter="python">noise_shape.py</command>
     </script>
     <param name="points" type="int" gui-text="Sample points (higher = smoother and more detailed curve, slower to compute)" min="12" max="200">60</param>
-    <param name="radius" type="float" gui-text="Base radius (larger = bigger shape)" min="10" max="500">80</param>
     <param name="amplitude" type="float" gui-text="Noise amplitude (larger = more irregular, spikier outline)" min="1" max="200">30</param>
     <param name="scale" type="float" gui-text="Noise scale (larger = finer, higher-frequency detail; smaller = broad smooth lumps)" min="0.1" max="50">1.2</param>
     <param name="seed" type="int" gui-text="Random seed (same seed + same settings reproduce the same shape; change it for a different shape)" min="1" max="2147483647">42</param>
+    <param name="noise_type" type="optiongroup" appearance="combo"
+       gui-text="Noise type">
+        <option value="simplex">Simplex</option>
+        <option value="fbm">FBM (fractal)</option>
+        <option value="turbulence">Turbulence</option>
+    </param>
+    <param name="octaves" type="int" min="1" max="8" gui-text="Octaves (Number of noise layers stacked for FBM / Turbulence)">4</param>
+    <param name="lacunarity" type="float" min="1.5" max="4" gui-text="Lacunarity (Frequency multiplier between octaves for FBM / Turbulence)">2.0</param>
+    <param name="gain" type="float" min="0.1" max="0.9" gui-text="Gain (Amplitude decay between octaves for FBM / Turbulence)">0.5</param>
+    <param name="smooth" type="bool" gui-text="Smooth output (Catmull-Rom)">true</param>
 </inkscape-extension>
