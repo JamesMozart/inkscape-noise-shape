@@ -1,7 +1,7 @@
 import inkex
 import math
 import random
-from inkex.paths import Path, Move, Line, Curve, ZoneClose
+from inkex.paths import Path, Move, ZoneClose
 
 # ============ Lightweight Simplex Noise (2D) ============
 class SimplexNoise:
@@ -335,13 +335,14 @@ class NoiseOffsetPath(inkex.EffectExtension):
                 if not subpath:
                     continue
 
+                poly = _subpath_polyline(subpath, samples_per_seg=24)
+                if len(poly) < 2:
+                    continue
+                
                 closed = any(isinstance(s, ZoneClose) for s in subpath)
                 if not closed and len(poly) > 2:
                     if math.hypot(poly[0][0] - poly[-1][0], poly[0][1] - poly[-1][1]) < 1e-6:
                         closed = True
-                poly = _subpath_polyline(subpath, samples_per_seg=24)
-                if len(poly) < 2:
-                    continue
 
                 samples = _resample_polyline_by_arclength(poly, n_samples, closed)
 
