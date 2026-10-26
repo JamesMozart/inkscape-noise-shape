@@ -1,91 +1,115 @@
 import inkex
 import math
 import random
+import numpy as np
 from inkex.paths import Path, Move, ZoneClose
 
-# ============ Lightweight Simplex Noise (2D) ============
+
+# ============ Vectorized Lightweight Simplex Noise (2D) ============
 class SimplexNoise:
+    """
+    NumPy-based 2D Simplex noise.
+
+    Reproducibility:
+      - perm table is built from Python's random.Random(seed) -> deterministic.
+      - noise_batch computes the same math per element as the scalar version,
+        but in one vectorized call.
+      - This class never consumes random state after __init__, so callers can
+        batch freely without changing output for a given seed.
+    """
+
     def __init__(self, seed=0):
         rng = random.Random(seed)
-        self.perm = list(range(256))
-        rng.shuffle(self.perm)
-        self.perm = self.perm * 2
-        self.grad3 = [
-            (1,1), (-1,1), (1,-1), (-1,-1),
-            (1,0), (-1,0), (0,1), (0,-1)
-        ]
+        perm_list = list(range(256))
+        rng.shuffle(perm_list)
+        self.perm = np.asarray(perm_list * 2, dtype=np.int64)
+
+        self.grad3 = np.array([
+            (1, 1), (-1, 1), (1, -1), (-1, -1),
+            (1, 0), (-1, 0), (0, 1), (0, -1),
+        ], dtype=np.float64)
+
         self.F2 = 0.5 * (math.sqrt(3.0) - 1.0)
         self.G2 = (3.0 - math.sqrt(3.0)) / 6.0
 
-    def _dot(self, g, x, y):
-        return g[0]*x + g[1]*y
+    def noise_batch(self, xin, yin):
+        xin = np.asarray(xin, dtype=np.float64)
+        yin = np.asarray(yin, dtype=np.float64)
+        perm = self.perm
+        grad3 = self.grad3
+        F2, G2 = self.F2, self.G2
 
-    def noise(self, xin, yin):
-        s = (xin + yin) * self.F2
-        i = math.floor(xin + s)
-        j = math.floor(yin + s)
-        t = (i + j) * self.G2
+        s = (xin + yin) * F2
+        i = np.floor(xin + s).astype(np.int64)
+        j = np.floor(yin + s).astype(np.int64)
+        t = (i + j) * G2
         x0 = xin - (i - t)
         y0 = yin - (j - t)
 
-        if x0 > y0:
-            i1, j1 = 1, 0
-        else:
-            i1, j1 = 0, 1
+        cond = x0 > y0
+        i1 = np.where(cond, 1, 0).astype(np.int64)
+        j1 = np.where(cond, 0, 1).astype(np.int64)
 
-        x1 = x0 - i1 + self.G2
-        y1 = y0 - j1 + self.G2
-        x2 = x0 - 1.0 + 2.0 * self.G2
-        y2 = y0 - 1.0 + 2.0 * self.G2
+        x1 = x0 - i1 + G2
+        y1 = y0 - j1 + G2
+        x2 = x0 - 1.0 + 2.0 * G2
+        y2 = y0 - 1.0 + 2.0 * G2
 
-        ii = int(i) & 255
-        jj = int(j) & 255
+        ii = i & 255
+        jj = j & 255
 
-        gi0 = self.perm[ii + self.perm[jj]] % 8
-        gi1 = self.perm[ii + i1 + self.perm[jj + j1]] % 8
-        gi2 = self.perm[ii + 1 + self.perm[jj + 1]] % 8
+        gi0 = perm[ii + perm[jj]] % 8
+        gi1 = perm[ii + i1 + perm[jj + j1]] % 8
+        gi2 = perm[ii + 1 + perm[jj + 1]] % 8
 
-        n0 = n1 = n2 = 0.0
-        t0 = 0.5 - x0*x0 - y0*y0
-        if t0 > 0:
-            t0 *= t0
-            n0 = t0 * t0 * self._dot(self.grad3[gi0], x0, y0)
+        g0x = grad3[gi0, 0]; g0y = grad3[gi0, 1]
+        g1x = grad3[gi1, 0]; g1y = grad3[gi1, 1]
+        g2x = grad3[gi2, 0]; g2y = grad3[gi2, 1]
 
-        t1 = 0.5 - x1*x1 - y1*y1
-        if t1 > 0:
-            t1 *= t1
-            n1 = t1 * t1 * self._dot(self.grad3[gi1], x1, y1)
+        t0 = 0.5 - x0 * x0 - y0 * y0
+        m0 = t0 > 0
+        t0m = np.where(m0, t0 * t0, 0.0)
+        n0 = np.where(m0, t0m * t0m * (g0x * x0 + g0y * y0), 0.0)
 
-        t2 = 0.5 - x2*x2 - y2*y2
-        if t2 > 0:
-            t2 *= t2
-            n2 = t2 * t2 * self._dot(self.grad3[gi2], x2, y2)
+        t1 = 0.5 - x1 * x1 - y1 * y1
+        m1 = t1 > 0
+        t1m = np.where(m1, t1 * t1, 0.0)
+        n1 = np.where(m1, t1m * t1m * (g1x * x1 + g1y * y1), 0.0)
+
+        t2 = 0.5 - x2 * x2 - y2 * y2
+        m2 = t2 > 0
+        t2m = np.where(m2, t2 * t2, 0.0)
+        n2 = np.where(m2, t2m * t2m * (g2x * x2 + g2y * y2), 0.0)
 
         return 70.0 * (n0 + n1 + n2)
 
-    def fbm(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
-        total = 0.0
+    def fbm_batch(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        total = np.zeros_like(x)
         amplitude = 1.0
         frequency = 1.0
         max_amp = 0.0
         for _ in range(max(1, int(octaves))):
-            total += amplitude * self.noise(x * frequency, y * frequency)
+            total += amplitude * self.noise_batch(x * frequency, y * frequency)
             max_amp += amplitude
             amplitude *= gain
             frequency *= lacunarity
-        return total / max_amp if max_amp > 0 else 0.0
+        return total / max_amp if max_amp > 0 else np.zeros_like(x)
 
-    def turbulence(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
-        total = 0.0
+    def turbulence_batch(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        total = np.zeros_like(x)
         amplitude = 1.0
         frequency = 1.0
         max_amp = 0.0
         for _ in range(max(1, int(octaves))):
-            total += amplitude * abs(self.noise(x * frequency, y * frequency))
+            total += amplitude * np.abs(self.noise_batch(x * frequency, y * frequency))
             max_amp += amplitude
             amplitude *= gain
             frequency *= lacunarity
-        return (2.0 * total / max_amp - 1.0) if max_amp > 0 else 0.0
+        return (2.0 * total / max_amp - 1.0) if max_amp > 0 else np.zeros_like(x)
 
 
 # ============ Path sampling helpers ============
@@ -106,6 +130,13 @@ def _path_subpaths(path):
 
 
 def _subpath_polyline(subpath, samples_per_seg=24):
+    """
+    Sample a subpath into a polyline (list of (x, y)).
+
+    NOTE: inkex's proxy_iterator / point(t) API is scalar; this loop is
+    inherently per-sample in Python. It produces the same point sequence
+    as the original implementation, so downstream NumPy code is bit-safe.
+    """
     if not subpath:
         return []
 
@@ -125,21 +156,16 @@ def _subpath_polyline(subpath, samples_per_seg=24):
             continue
 
         if name == "ZoneClose":
-            # 采样闭合边：从 last_point 回到 subpath_start
             if subpath_start is not None and last_point is not None:
                 sx, sy = subpath_start
                 lx, ly = last_point
-                # 只有距离 > 0 才补采样，避免重复点
                 if math.hypot(sx - lx, sy - ly) > 1e-9:
                     for i in range(1, samples_per_seg + 1):
                         t = i / samples_per_seg
                         poly.append((lx + t * (sx - lx), ly + t * (sy - ly)))
-                # 最后一点就是起点（与 poly[0] 重复）
-                # 保留重复点，由下游重采样统一处理
             last_point = subpath_start
             continue
 
-        # Line / Curve / Quadratic / Arc / ...
         for i in range(1, samples_per_seg + 1):
             t = i / samples_per_seg
             p = proxy.point(t)
@@ -149,76 +175,103 @@ def _subpath_polyline(subpath, samples_per_seg=24):
     return poly
 
 
-def _resample_polyline_by_arclength(poly, n, closed):
-    """Resample a polyline to n points evenly spaced by arc length."""
+def _resample_polyline_by_arclength_np(poly, n, closed):
+    """
+    Vectorized resampling of a polyline to n points evenly spaced by arc length.
+    Returns an (n, 2) float64 array.
+    """
     if len(poly) < 2:
-        return [(0.0, 0.0)] * n
+        return np.zeros((n, 2), dtype=np.float64)
 
-    # cumulative lengths
-    cum = [0.0]
-    for i in range(1, len(poly)):
-        dx = poly[i][0] - poly[i-1][0]
-        dy = poly[i][1] - poly[i-1][1]
-        cum.append(cum[-1] + math.hypot(dx, dy))
+    pts = np.asarray(poly, dtype=np.float64)
+    diffs = np.diff(pts, axis=0)
+    seg_lengths = np.hypot(diffs[:, 0], diffs[:, 1])
+    cum = np.concatenate([[0.0], np.cumsum(seg_lengths)])
     total = cum[-1]
 
-    if total <= 0:
-        return [poly[0]] * n
+    if total <= 0.0:
+        return np.tile(pts[0], (n, 1))
 
-    result = []
-    # For closed paths we sample n points at t = k/n * total, k=0..n-1
-    # For open paths we sample n points at t = k/(n-1) * total, k=0..n-1
-    for k in range(n):
-        if closed:
-            t = (k / n) * total
-        else:
-            t = (k / (n - 1)) * total if n > 1 else 0.0
-        # binary search for segment
-        lo, hi = 0, len(cum) - 1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if cum[mid] < t:
-                lo = mid + 1
-            else:
-                hi = mid
-        idx = lo
-        if idx == 0:
-            result.append(poly[0])
-            continue
-        seg_len = cum[idx] - cum[idx-1]
-        if seg_len <= 0:
-            result.append(poly[idx])
-            continue
-        frac = (t - cum[idx-1]) / seg_len
-        x = poly[idx-1][0] + frac * (poly[idx][0] - poly[idx-1][0])
-        y = poly[idx-1][1] + frac * (poly[idx][1] - poly[idx-1][1])
-        result.append((x, y))
-
-    return result
-
-
-def _tangent_at(pts, i, closed):
-    """Approximate tangent at pts[i] using neighbors."""
-    n = len(pts)
     if closed:
-        prev = pts[(i - 1) % n]
-        nxt = pts[(i + 1) % n]
+        t_vals = (np.arange(n, dtype=np.float64) / n) * total
     else:
-        if i == 0:
-            prev = pts[0]
-            nxt = pts[1]
-        elif i == n - 1:
-            prev = pts[n - 2]
-            nxt = pts[n - 1]
+        if n > 1:
+            t_vals = (np.arange(n, dtype=np.float64) / (n - 1)) * total
         else:
-            prev = pts[i - 1]
-            nxt = pts[i + 1]
-    dx = nxt[0] - prev[0]
-    dy = nxt[1] - prev[1]
-    length = math.hypot(dx, dy)
-    if length == 0:
-        return (1.0, 0.0)
-    return (dx / length, dy / length)
+            t_vals = np.zeros(1, dtype=np.float64)
+
+    # np.interp handles out-of-range t == total gracefully (clamps to last x).
+    x_out = np.interp(t_vals, cum, pts[:, 0])
+    y_out = np.interp(t_vals, cum, pts[:, 1])
+    return np.stack([x_out, y_out], axis=1)
+
+
+def _tangents_np(pts, closed):
+    """
+    Vectorized finite-difference tangents (unit length) for an (n, 2) array.
+    Matches the original scalar behavior:
+      - closed: prev = (i-1) % n, next = (i+1) % n
+      - open:   endpoints use self as neighbor (same as original clamp)
+    Returns (n, 2) array.
+    """
+    n = pts.shape[0]
+    if n == 0:
+        return np.zeros((0, 2), dtype=np.float64)
+
+    if closed:
+        prev = np.roll(pts, 1, axis=0)
+        nxt = np.roll(pts, -1, axis=0)
+    else:
+        prev = pts.copy()
+        nxt = pts.copy()
+        if n >= 2:
+            prev[1:] = pts[:-1]      # prev[i] = pts[i-1], prev[0] = pts[0]
+            nxt[:-1] = pts[1:]       # nxt[i]  = pts[i+1], nxt[-1] = pts[-1]
+
+    d = nxt - prev
+    length = np.hypot(d[:, 0], d[:, 1])
+    # Avoid division by zero: fall back to (1, 0) where length == 0
+    safe = length > 0
+    out = np.empty_like(d)
+    out[safe] = d[safe] / length[safe, None]
+    out[~safe] = (1.0, 0.0)
+    return out
+
+
+def _catmull_rom_controls_np(pts, closed):
+    """
+    Returns (p1, c1, c2, p2) arrays for Catmull-Rom -> Bezier conversion.
+    Shapes: p1, c1, c2, p2 are (m, 2), where m = n (closed) or n-1 (open).
+
+    For closed: m = n, segment i goes from pts[i] to pts[(i+1) % n].
+    For open:   m = n-1, segment i goes from pts[i] to pts[i+1].
+    """
+    n = pts.shape[0]
+    tension = 1.0 / 6.0
+
+    if n < 2:
+        empty = np.zeros((0, 2), dtype=np.float64)
+        return empty, empty, empty, empty
+
+    if closed:
+        p0 = np.roll(pts, 1, axis=0)
+        p1 = pts.copy()
+        p2 = np.roll(pts, -1, axis=0)
+        p3 = np.roll(pts, -2, axis=0)
+    else:
+        # ext = [pts[0]] + pts + [pts[-1]]
+        ext = np.empty((n + 2, 2), dtype=np.float64)
+        ext[0] = pts[0]
+        ext[1:-1] = pts
+        ext[-1] = pts[-1]
+        p0 = ext[0:n - 1]
+        p1 = ext[1:n]
+        p2 = ext[2:n + 1]
+        p3 = ext[3:n + 2]
+
+    c1 = p1 + (p2 - p0) * tension
+    c2 = p2 - (p3 - p1) * tension
+    return p1, c1, c2, p2
 
 
 # ============ Inkscape extension ============
@@ -248,23 +301,19 @@ class NoiseOffsetPath(inkex.EffectExtension):
             help="Smooth output (Catmull-Rom); false = polyline.",
         )
 
-    def _sample_noise(self, noise, nx, ny):
+    def _sample_noise_batch(self, noise, nx, ny):
         kind = self.options.noise_type
         if kind == "fbm":
-            return noise.fbm(
-                nx, ny,
-                octaves=self.options.octaves,
-                lacunarity=self.options.lacunarity,
-                gain=self.options.gain,
-            )
+            return noise.fbm_batch(nx, ny,
+                                   octaves=self.options.octaves,
+                                   lacunarity=self.options.lacunarity,
+                                   gain=self.options.gain)
         if kind == "turbulence":
-            return noise.turbulence(
-                nx, ny,
-                octaves=self.options.octaves,
-                lacunarity=self.options.lacunarity,
-                gain=self.options.gain,
-            )
-        return noise.noise(nx, ny)
+            return noise.turbulence_batch(nx, ny,
+                                          octaves=self.options.octaves,
+                                          lacunarity=self.options.lacunarity,
+                                          gain=self.options.gain)
+        return noise.noise_batch(nx, ny)
 
     def effect(self):
         if not self.svg.selection:
@@ -278,7 +327,7 @@ class NoiseOffsetPath(inkex.EffectExtension):
 
         any_converted = False
 
-        # Snapshot the selection as a list, because we may modify the tree
+        # Snapshot the selection as a list, because we may modify the tree.
         selected = list(self.svg.selection.values())
 
         # ---- Step 1: convert every selected element to a PathElement ----
@@ -291,25 +340,19 @@ class NoiseOffsetPath(inkex.EffectExtension):
             try:
                 new_elem = elem.to_path_element()
             except Exception as e:
-                inkex.errormsg(
-                    f"Could not convert <{elem.tag}> to path: {e}"
-                )
+                inkex.errormsg(f"Could not convert <{elem.tag}> to path: {e}")
                 continue
 
             if new_elem is None:
                 inkex.errormsg(f"Conversion of <{elem.tag}> returned no path.")
                 continue
 
-            # Replace original element with the converted path in the tree
             parent = elem.getparent()
             if parent is None:
                 continue
             index = parent.index(elem)
             parent.remove(elem)
             parent.insert(index, new_elem)
-            # Copy over the id and any style that to_path_element may not preserve
-            # (to_path_element usually preserves id, style, transform, but let's
-            # be safe about transform — it is normally kept.)
             path_elems.append(new_elem)
 
         if not path_elems:
@@ -320,8 +363,6 @@ class NoiseOffsetPath(inkex.EffectExtension):
         for elem in path_elems:
             path = elem.path.to_absolute()
             transform = elem.transform
-            # Bake the element's own transform into the path coordinates so
-            # that we can write back in parent space and clear transform.
             if transform:
                 path = path.transform(transform)
                 clear_transform = True
@@ -338,42 +379,44 @@ class NoiseOffsetPath(inkex.EffectExtension):
                 poly = _subpath_polyline(subpath, samples_per_seg=24)
                 if len(poly) < 2:
                     continue
-                
+
                 closed = any(isinstance(s, ZoneClose) for s in subpath)
                 if not closed and len(poly) > 2:
-                    if math.hypot(poly[0][0] - poly[-1][0], poly[0][1] - poly[-1][1]) < 1e-6:
+                    if math.hypot(poly[0][0] - poly[-1][0],
+                                  poly[0][1] - poly[-1][1]) < 1e-6:
                         closed = True
 
-                samples = _resample_polyline_by_arclength(poly, n_samples, closed)
+                # (n, 2)
+                samples = _resample_polyline_by_arclength_np(poly, n_samples, closed)
 
-                offset_pts = []
-                for i, (x, y) in enumerate(samples):
-                    tx, ty = _tangent_at(samples, i, closed)
-                    nx_dir, ny_dir = -ty, tx  # normal = tangent rotated +90°
+                # (n, 2) unit tangents
+                tangents = _tangents_np(samples, closed)
+                normals = np.stack([-tangents[:, 1], tangents[:, 0]], axis=1)
 
-                    if closed:
-                        theta = (i / n_samples) * 2.0 * math.pi
-                        nz_x = math.cos(theta) * scale
-                        nz_y = math.sin(theta) * scale
+                # Build noise input coordinates in one vectorized pass.
+                if closed:
+                    theta = (np.arange(n_samples, dtype=np.float64) / n_samples) * 2.0 * math.pi
+                    nz_x = np.cos(theta) * scale
+                    nz_y = np.sin(theta) * scale
+                else:
+                    if n_samples > 1:
+                        t = np.arange(n_samples, dtype=np.float64) / (n_samples - 1)
                     else:
-                        t = i / (n_samples - 1) if n_samples > 1 else 0.0
-                        nz_x = t * scale
-                        nz_y = 0.0
+                        t = np.zeros(1, dtype=np.float64)
+                    nz_x = t * scale
+                    nz_y = np.zeros_like(nz_x)
 
-                    v = self._sample_noise(noise, nz_x, nz_y)
-                    offset_pts.append((
-                        x + nx_dir * v * amp,
-                        y + ny_dir * v * amp,
-                    ))
+                v = self._sample_noise_batch(noise, nz_x, nz_y)  # (n,)
 
-                d = self._catmull_or_poly(offset_pts, closed)
+                offset_pts = samples + normals * (v[:, None] * amp)  # (n, 2)
+
+                d = self._catmull_or_poly_np(offset_pts, closed)
                 new_path_segments.append(d)
 
             if not new_path_segments:
                 continue
 
             combined_d = " ".join(new_path_segments)
-
             elem.set("d", combined_d)
             if clear_transform:
                 elem.set("transform", "")
@@ -382,62 +425,45 @@ class NoiseOffsetPath(inkex.EffectExtension):
         if not any_converted:
             inkex.errormsg("No valid path elements were selected.")
 
-    def _catmull_or_poly(self, pts, closed):
-        if self.options.smooth:
-            return self._catmull_rom_to_svg_path(pts, closed)
-        else:
-            return self._polyline_to_svg_path(pts, closed)
+    # ---- Output formatting ----
 
-    def _polyline_to_svg_path(self, pts, closed):
-        n = len(pts)
+    def _catmull_or_poly_np(self, pts, closed):
+        if self.options.smooth:
+            return self._catmull_rom_to_svg_path_np(pts, closed)
+        return self._polyline_to_svg_path_np(pts, closed)
+
+    @staticmethod
+    def _polyline_to_svg_path_np(pts, closed):
+        n = pts.shape[0]
         if n < 2:
             return ""
-        parts = [f"M {pts[0][0]:.4f},{pts[0][1]:.4f}"]
+        parts = [f"M {pts[0, 0]:.4f},{pts[0, 1]:.4f}"]
         for i in range(1, n):
-            parts.append(f"L {pts[i][0]:.4f},{pts[i][1]:.4f}")
+            parts.append(f"L {pts[i, 0]:.4f},{pts[i, 1]:.4f}")
         if closed:
             parts.append("Z")
         return " ".join(parts)
 
-    def _catmull_rom_to_svg_path(self, pts, closed):
-        n = len(pts)
+    @staticmethod
+    def _catmull_rom_to_svg_path_np(pts, closed):
+        n = pts.shape[0]
         if n < 2:
             return ""
         if not closed and n < 3:
-            return self._polyline_to_svg_path(pts, closed)
+            return NoiseOffsetPath._polyline_to_svg_path_np(pts, closed)
 
-        tension = 1.0 / 6.0
-        parts = [f"M {pts[0][0]:.4f},{pts[0][1]:.4f}"]
+        p1, c1, c2, p2 = _catmull_rom_controls_np(pts, closed)
+        parts = [f"M {pts[0, 0]:.4f},{pts[0, 1]:.4f}"]
 
+        # Iterate over segments; each row is one cubic.
+        for i in range(p1.shape[0]):
+            parts.append(
+                f"C {c1[i, 0]:.4f},{c1[i, 1]:.4f} "
+                f"{c2[i, 0]:.4f},{c2[i, 1]:.4f} "
+                f"{p2[i, 0]:.4f},{p2[i, 1]:.4f}"
+            )
         if closed:
-            for i in range(n):
-                p0 = pts[(i - 1) % n]
-                p1 = pts[i % n]
-                p2 = pts[(i + 1) % n]
-                p3 = pts[(i + 2) % n]
-                c1x = p1[0] + (p2[0] - p0[0]) * tension
-                c1y = p1[1] + (p2[1] - p0[1]) * tension
-                c2x = p2[0] - (p3[0] - p1[0]) * tension
-                c2y = p2[1] - (p3[1] - p1[1]) * tension
-                parts.append(
-                    f"C {c1x:.4f},{c1y:.4f} {c2x:.4f},{c2y:.4f} {p2[0]:.4f},{p2[1]:.4f}"
-                )
             parts.append("Z")
-        else:
-            # Open path: handle endpoints with clamped neighbors
-            ext = [pts[0]] + pts + [pts[-1]]
-            for i in range(len(pts) - 1):
-                p0 = ext[i]
-                p1 = ext[i + 1]
-                p2 = ext[i + 2]
-                p3 = ext[i + 3]
-                c1x = p1[0] + (p2[0] - p0[0]) * tension
-                c1y = p1[1] + (p2[1] - p0[1]) * tension
-                c2x = p2[0] - (p3[0] - p1[0]) * tension
-                c2y = p2[1] - (p3[1] - p1[1]) * tension
-                parts.append(
-                    f"C {c1x:.4f},{c1y:.4f} {c2x:.4f},{c2y:.4f} {p2[0]:.4f},{p2[1]:.4f}"
-                )
         return " ".join(parts)
 
 
