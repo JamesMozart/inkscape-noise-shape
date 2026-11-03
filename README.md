@@ -33,7 +33,7 @@ Closed paths sample the noise around a circle so the start and end match seamles
 
 ## Install
 
-Copy `noise_shape.py` and `noise_shape.inx` into your Inkscape extensions folder:
+Copy all files into your Inkscape extensions folder:
 
 - **Linux:** `~/.config/inkscape/extensions/`
 - **Windows:** `%APPDATA%\inkscape\extensions\`
