@@ -33,7 +33,7 @@ Closed paths sample the noise around a circle so the start and end match seamles
 
 ## Install
 
-Copy all files into your Inkscape extensions folder:
+Copy the folder of this extension into your Inkscape extensions directory:
 
 - **Linux:** `~/.config/inkscape/extensions/`
 - **Windows:** `%APPDATA%\inkscape\extensions\`
