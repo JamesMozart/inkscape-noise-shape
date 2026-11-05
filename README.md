@@ -8,6 +8,7 @@ Use it for:
 - Explosion or spike effects (large amplitude + high frequency)
 - Torn paper, rough edges, fire/smoke contours
 - Low-poly / crystalline styles (low sample count + smooth off)
+- Hair-like fringes, fur edges, and wind-blown outlines (tangent offset)
 
 ![Example output](example.png)
 
@@ -53,6 +54,7 @@ Restart Inkscape. Requires Inkscape 1.x (Python 3 + `inkex`).
 |---|---|
 | Sample points | Number of samples evenly spaced along the total path length. Higher = smoother, more detail, slower; lower = more angular. Range 8–500. |
 | Noise amplitude | Maximum displacement along the normal, in document units. Larger = more irregular and spiky; smaller = closer to the original outline. |
+| Tangent offset (%) | Tangential displacement as a percentage of the normal displacement. `0` = pure in/out wobble (original behavior). Positive values slide points forward along the path direction; negative values slide them backward. Same magnitude as the normal offset, so `100` means the point moves sideways by the same amount it moves in/out. Good for hair/fur fringes, wind-blown sweeps, and sheared or motion-blurred silhouettes. |
 | Noise scale | Noise frequency along the path. Larger = finer, more fragmented detail; smaller = broader, smoother undulations. |
 | Random seed | Same seed + same settings reproduce the same result; change it for a different shape. |
 | Noise type | `Simplex` = single smooth layer; `FBM` = stacked octaves for natural multi-scale detail (clouds, terrain); `Turbulence` = stacked absolute-value octaves for sharp, creased, fiery or smoky outlines. |

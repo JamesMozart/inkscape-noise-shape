@@ -12,8 +12,9 @@
     <script>
         <command location="inx" interpreter="python">noise_shape.py</command>
     </script>
-    <param name="points" type="int" gui-text="Sample points (higher = smoother and more detailed curve, slower to compute)" min="12" max="200">60</param>
+    <param name="points" type="int" gui-text="Sample points (higher = smoother and more detailed curve, slower to compute)" min="3" max="10000">60</param>
     <param name="amplitude" type="float" gui-text="Noise amplitude (larger = more irregular, spikier outline)" min="1" max="200">30</param>
+    <param name="tangent_offset" type="float" min="-500" max="500" gui-text="Tangential offset (% of normal displacement, can be negative)">0</param>
     <param name="scale" type="float" gui-text="Noise scale (larger = finer, higher-frequency detail; smaller = broad smooth lumps)" min="0.1" max="50">1.2</param>
     <param name="seed" type="int" gui-text="Random seed (same seed + same settings reproduce the same shape; change it for a different shape)" min="1" max="2147483647">42</param>
     <param name="noise_type" type="optiongroup" appearance="combo"

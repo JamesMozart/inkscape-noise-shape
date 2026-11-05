@@ -1,115 +1,39 @@
 import inkex
 import math
-import random
+import numpy as np
 from path_helper import boundary_polylines
-
-# ============ Lightweight Simplex Noise (2D) ============
-class SimplexNoise:
-    def __init__(self, seed=0):
-        rng = random.Random(seed)
-        self.perm = list(range(256))
-        rng.shuffle(self.perm)
-        self.perm = self.perm * 2
-        self.grad3 = [
-            (1,1), (-1,1), (1,-1), (-1,-1),
-            (1,0), (-1,0), (0,1), (0,-1)
-        ]
-        self.F2 = 0.5 * (math.sqrt(3.0) - 1.0)
-        self.G2 = (3.0 - math.sqrt(3.0)) / 6.0
-
-    def _dot(self, g, x, y):
-        return g[0]*x + g[1]*y
-
-    def noise(self, xin, yin):
-        s = (xin + yin) * self.F2
-        i = math.floor(xin + s)
-        j = math.floor(yin + s)
-        t = (i + j) * self.G2
-        x0 = xin - (i - t)
-        y0 = yin - (j - t)
-
-        if x0 > y0:
-            i1, j1 = 1, 0
-        else:
-            i1, j1 = 0, 1
-
-        x1 = x0 - i1 + self.G2
-        y1 = y0 - j1 + self.G2
-        x2 = x0 - 1.0 + 2.0 * self.G2
-        y2 = y0 - 1.0 + 2.0 * self.G2
-
-        ii = int(i) & 255
-        jj = int(j) & 255
-
-        gi0 = self.perm[ii + self.perm[jj]] % 8
-        gi1 = self.perm[ii + i1 + self.perm[jj + j1]] % 8
-        gi2 = self.perm[ii + 1 + self.perm[jj + 1]] % 8
-
-        n0 = n1 = n2 = 0.0
-        t0 = 0.5 - x0*x0 - y0*y0
-        if t0 > 0:
-            t0 *= t0
-            n0 = t0 * t0 * self._dot(self.grad3[gi0], x0, y0)
-
-        t1 = 0.5 - x1*x1 - y1*y1
-        if t1 > 0:
-            t1 *= t1
-            n1 = t1 * t1 * self._dot(self.grad3[gi1], x1, y1)
-
-        t2 = 0.5 - x2*x2 - y2*y2
-        if t2 > 0:
-            t2 *= t2
-            n2 = t2 * t2 * self._dot(self.grad3[gi2], x2, y2)
-
-        return 70.0 * (n0 + n1 + n2)
-
-    def fbm(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
-        total = 0.0
-        amplitude = 1.0
-        frequency = 1.0
-        max_amp = 0.0
-        for _ in range(max(1, int(octaves))):
-            total += amplitude * self.noise(x * frequency, y * frequency)
-            max_amp += amplitude
-            amplitude *= gain
-            frequency *= lacunarity
-        return total / max_amp if max_amp > 0 else 0.0
-
-    def turbulence(self, x, y, octaves=4, lacunarity=2.0, gain=0.5):
-        total = 0.0
-        amplitude = 1.0
-        frequency = 1.0
-        max_amp = 0.0
-        for _ in range(max(1, int(octaves))):
-            total += amplitude * abs(self.noise(x * frequency, y * frequency))
-            max_amp += amplitude
-            amplitude *= gain
-            frequency *= lacunarity
-        return (2.0 * total / max_amp - 1.0) if max_amp > 0 else 0.0
+from simplex_noise import SimplexNoise
 
 
-def _tangent_at(pts, i, closed):
-    """Approximate tangent at pts[i] using neighbors."""
+def _tangent_at_batch(pts, closed):
+    """Vectorized tangents at every point of a polyline.
+
+    pts: (N, 2) float64 array
+    returns: (N, 2) unit tangent vectors
+    """
     n = len(pts)
+    if n < 2:
+        return np.tile(np.array([1.0, 0.0]), (n, 1))
+
     if closed:
-        prev = pts[(i - 1) % n]
-        nxt = pts[(i + 1) % n]
+        prev = np.roll(pts, 1, axis=0)
+        nxt = np.roll(pts, -1, axis=0)
     else:
-        if i == 0:
-            prev = pts[0]
-            nxt = pts[1]
-        elif i == n - 1:
-            prev = pts[n - 2]
-            nxt = pts[n - 1]
-        else:
-            prev = pts[i - 1]
-            nxt = pts[i + 1]
-    dx = nxt[0] - prev[0]
-    dy = nxt[1] - prev[1]
-    length = math.hypot(dx, dy)
-    if length == 0:
-        return (1.0, 0.0)
-    return (dx / length, dy / length)
+        prev = np.empty_like(pts)
+        nxt = np.empty_like(pts)
+        prev[0] = pts[0]
+        prev[1:] = pts[:-1]
+        nxt[-1] = pts[-1]
+        nxt[:-1] = pts[1:]
+
+    d = nxt - prev
+    length = np.hypot(d[:, 0], d[:, 1])
+    # Avoid division by zero; fall back to (1, 0) where length == 0
+    safe = length > 0
+    out = np.empty_like(d)
+    out[safe] = d[safe] / length[safe, None]
+    out[~safe] = np.array([1.0, 0.0])
+    return out
 
 
 # ============ Inkscape extension ============
@@ -133,29 +57,37 @@ class NoiseOffsetPath(inkex.EffectExtension):
         parser.add_argument("--lacunarity", type=float, default=2.0)
         parser.add_argument("--gain", type=float, default=0.5)
         parser.add_argument(
+            "--tangent_offset",
+            type=float,
+            default=50.0,
+            help="Tangential offset as a percentage of the normal displacement "
+                 "(can be negative). 0 = pure normal offset.",
+        )
+        parser.add_argument(
             "--smooth",
             type=inkex.Boolean,
             default=True,
             help="Smooth output (Catmull-Rom); false = polyline.",
         )
 
-    def _sample_noise(self, noise, nx, ny):
+    def _sample_noise_batch(self, noise, nx, ny):
+        """Vectorized noise sampling over arrays nx, ny."""
         kind = self.options.noise_type
         if kind == "fbm":
-            return noise.fbm(
+            return noise.fbm_batch(
                 nx, ny,
                 octaves=self.options.octaves,
                 lacunarity=self.options.lacunarity,
                 gain=self.options.gain,
             )
         if kind == "turbulence":
-            return noise.turbulence(
+            return noise.turbulence_batch(
                 nx, ny,
                 octaves=self.options.octaves,
                 lacunarity=self.options.lacunarity,
                 gain=self.options.gain,
             )
-        return noise.noise(nx, ny)
+        return noise.noise_batch(nx, ny)
 
     def effect(self):
         if not self.svg.selection:
@@ -166,10 +98,10 @@ class NoiseOffsetPath(inkex.EffectExtension):
         n_samples = max(8, min(500, self.options.points))
         amp = self.options.amplitude
         scale = self.options.scale
+        # Tangent offset ratio: percentage -> fraction
+        tangent_ratio = self.options.tangent_offset / 100.0
 
         any_converted = False
-
-        # Snapshot the selection as a list, because we may modify the tree
         selected = list(self.svg.selection.values())
 
         # ---- Step 1: convert every selected element to a PathElement ----
@@ -182,25 +114,19 @@ class NoiseOffsetPath(inkex.EffectExtension):
             try:
                 new_elem = elem.to_path_element()
             except Exception as e:
-                inkex.errormsg(
-                    f"Could not convert <{elem.tag}> to path: {e}"
-                )
+                inkex.errormsg(f"Could not convert <{elem.tag}> to path: {e}")
                 continue
 
             if new_elem is None:
                 inkex.errormsg(f"Conversion of <{elem.tag}> returned no path.")
                 continue
 
-            # Replace original element with the converted path in the tree
             parent = elem.getparent()
             if parent is None:
                 continue
             index = parent.index(elem)
             parent.remove(elem)
             parent.insert(index, new_elem)
-            # Copy over the id and any style that to_path_element may not preserve
-            # (to_path_element usually preserves id, style, transform, but let's
-            # be safe about transform — it is normally kept.)
             path_elems.append(new_elem)
 
         if not path_elems:
@@ -211,8 +137,6 @@ class NoiseOffsetPath(inkex.EffectExtension):
         for elem in path_elems:
             path = elem.path.to_absolute()
             transform = elem.transform
-            # Bake the element's own transform into the path coordinates so
-            # that we can write back in parent space and clear transform.
             if transform:
                 path = path.transform(transform)
                 clear_transform = True
@@ -220,29 +144,36 @@ class NoiseOffsetPath(inkex.EffectExtension):
                 clear_transform = False
 
             new_path_segments = []
-            for poly, closed in boundary_polylines(path, samples_per_seg=24, target_resample=n_samples):
-                if len(poly) < 2:
-                    continue
+            for poly, closed in boundary_polylines(path, samples_per_seg=24,
+                                           target_resample=n_samples):
+                n = poly.shape[0]
 
-                offset_pts = []
-                for i, (x, y) in enumerate(poly):
-                    tx, ty = _tangent_at(poly, i, closed)
-                    nx_dir, ny_dir = -ty, tx  # normal = tangent rotated +90°
+                # ---- vectorized tangents & normals ----
+                tangents = _tangent_at_batch(poly, closed)
+                normals = np.column_stack((-tangents[:, 1], tangents[:, 0]))
 
-                    if closed:
-                        theta = (i / n_samples) * 2.0 * math.pi
-                        nz_x = math.cos(theta) * scale
-                        nz_y = math.sin(theta) * scale
-                    else:
-                        t = i / (n_samples - 1) if n_samples > 1 else 0.0
-                        nz_x = t * scale
-                        nz_y = 0.0
+                # ---- vectorized noise coordinates ----
+                if closed:
+                    theta = (np.arange(n) / n_samples) * (2.0 * math.pi)
+                    nz_x = np.cos(theta) * scale
+                    nz_y = np.sin(theta) * scale
+                else:
+                    t = np.linspace(0.0, 1.0, n) if n > 1 else np.zeros(1)
+                    nz_x = t * scale
+                    nz_y = np.zeros_like(t)
 
-                    v = self._sample_noise(noise, nz_x, nz_y)
-                    offset_pts.append((
-                        x + nx_dir * v * amp,
-                        y + ny_dir * v * amp,
-                    ))
+                v = self._sample_noise_batch(noise, nz_x, nz_y)
+
+                # ---- normal + tangential displacement ----
+                # Normal displacement: v * amp
+                # Tangential displacement: same scalar scaled by tangent_ratio
+                normal_disp = v[:, None] * amp
+                tangent_disp = (np.sqrt(np.abs(v)) * np.sign(v))[:, None] * amp * tangent_ratio
+                offset_pts = (
+                    poly
+                    + normals * normal_disp
+                    + tangents * tangent_disp
+                )
 
                 d = self._catmull_or_poly(offset_pts, closed)
                 new_path_segments.append(d)
@@ -250,9 +181,7 @@ class NoiseOffsetPath(inkex.EffectExtension):
             if not new_path_segments:
                 continue
 
-            combined_d = " ".join(new_path_segments)
-
-            elem.set("d", combined_d)
+            elem.set("d", " ".join(new_path_segments))
             if clear_transform:
                 elem.set("transform", "")
             any_converted = True
@@ -263,60 +192,51 @@ class NoiseOffsetPath(inkex.EffectExtension):
     def _catmull_or_poly(self, pts, closed):
         if self.options.smooth:
             return self._catmull_rom_to_svg_path(pts, closed)
-        else:
-            return self._polyline_to_svg_path(pts, closed)
+        return self._polyline_to_svg_path(pts, closed)
 
     def _polyline_to_svg_path(self, pts, closed):
         n = len(pts)
         if n < 2:
             return ""
-        parts = [f"M {pts[0][0]:.4f},{pts[0][1]:.4f}"]
-        for i in range(1, n):
-            parts.append(f"L {pts[i][0]:.4f},{pts[i][1]:.4f}")
-        if closed:
-            parts.append("Z")
-        return " ".join(parts)
+        # Vectorized "M x,y L x,y ..."
+        coords = np.asarray(pts, dtype=np.float64)
+        body = " ".join(f"L {x:.4f},{y:.4f}" for x, y in coords[1:])
+        head = f"M {coords[0, 0]:.4f},{coords[0, 1]:.4f}"
+        return f"{head} {body}" + (" Z" if closed else "")
 
     def _catmull_rom_to_svg_path(self, pts, closed):
-        n = len(pts)
+        pts = np.asarray(pts, dtype=np.float64)
+        n = pts.shape[0]
         if n < 2:
             return ""
         if not closed and n < 3:
             return self._polyline_to_svg_path(pts, closed)
 
         tension = 1.0 / 6.0
-        parts = [f"M {pts[0][0]:.4f},{pts[0][1]:.4f}"]
 
         if closed:
-            for i in range(n):
-                p0 = pts[(i - 1) % n]
-                p1 = pts[i % n]
-                p2 = pts[(i + 1) % n]
-                p3 = pts[(i + 2) % n]
-                c1x = p1[0] + (p2[0] - p0[0]) * tension
-                c1y = p1[1] + (p2[1] - p0[1]) * tension
-                c2x = p2[0] - (p3[0] - p1[0]) * tension
-                c2y = p2[1] - (p3[1] - p1[1]) * tension
-                parts.append(
-                    f"C {c1x:.4f},{c1y:.4f} {c2x:.4f},{c2y:.4f} {p2[0]:.4f},{p2[1]:.4f}"
-                )
-            parts.append("Z")
+            p0 = np.roll(pts, 1, axis=0)
+            p1 = pts
+            p2 = np.roll(pts, -1, axis=0)
+            p3 = np.roll(pts, -2, axis=0)
         else:
-            # Open path: handle endpoints with clamped neighbors
-            ext = [pts[0]] + pts + [pts[-1]]
-            for i in range(len(pts) - 1):
-                p0 = ext[i]
-                p1 = ext[i + 1]
-                p2 = ext[i + 2]
-                p3 = ext[i + 3]
-                c1x = p1[0] + (p2[0] - p0[0]) * tension
-                c1y = p1[1] + (p2[1] - p0[1]) * tension
-                c2x = p2[0] - (p3[0] - p1[0]) * tension
-                c2y = p2[1] - (p3[1] - p1[1]) * tension
-                parts.append(
-                    f"C {c1x:.4f},{c1y:.4f} {c2x:.4f},{c2y:.4f} {p2[0]:.4f},{p2[1]:.4f}"
-                )
-        return " ".join(parts)
+            ext = np.vstack([pts[0], pts, pts[-1]])
+            p0 = ext[:-3]
+            p1 = ext[1:-2]
+            p2 = ext[2:-1]
+            p3 = ext[3:]
+
+        c1 = p1 + (p2 - p0) * tension
+        c2 = p2 - (p3 - p1) * tension
+
+        # Emit "M p1[0]" then one "C c1 c2 p2" per segment
+        head = f"M {pts[0, 0]:.4f},{pts[0, 1]:.4f}"
+        segs = [
+            f"C {a:.4f},{b:.4f} {c:.4f},{d:.4f} {e:.4f},{f:.4f}"
+            for (a, b), (c, d), (e, f) in zip(c1, c2, p2)
+        ]
+        tail = " Z" if closed else ""
+        return f"{head} " + " ".join(segs) + tail
 
 
 if __name__ == "__main__":
