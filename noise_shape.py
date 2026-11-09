@@ -109,7 +109,7 @@ class NoiseOffsetPath(inkex.EffectExtension):
             return
 
         noise = SimplexNoise(self.options.seed)
-        n_samples = max(8, min(500, self.options.points))
+        n_samples = self.options.points
         amp = self.options.amplitude
         scale = self.options.scale
         # Tangent offset ratio: percentage -> fraction
