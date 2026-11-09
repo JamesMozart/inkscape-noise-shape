@@ -61,6 +61,9 @@ Restart Inkscape. Requires Inkscape 1.x (Python 3 + `inkex`).
 | Octaves | Number of noise layers stacked for `FBM` / `Turbulence`. Higher = more detail, slower. Typically 3–6. |
 | Lacunarity | Frequency multiplier between octaves for `FBM` / `Turbulence`. Usually 2.0. Higher = finer detail scales. |
 | Gain | Amplitude decay between octaves for `FBM` / `Turbulence`. Usually 0.5. Higher = rougher, stronger high-frequency contribution. |
+| Gain | Amplitude decay between octaves for `FBM` / `Turbulence`. Usually 0.5. Higher = rougher, stronger high-frequency contribution. |
+| Noise cutoff low | higher = cutoff noise effect from inner side. |
+| Noise cutoff high | lower = cutoff noise effect from outer side. |
 | Smooth output | On = Catmull-Rom spline through every sample point (organic, no visible corners); Off = straight-segment polyline (crisp angular look, good for low-poly / crystalline styles). |
 
 > **Note:** `Octaves`, `Lacunarity`, and `Gain` only take effect when the noise type is `FBM` or `Turbulence`. They are ignored for `Simplex`.

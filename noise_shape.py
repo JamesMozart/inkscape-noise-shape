@@ -43,6 +43,13 @@ class NoiseOffsetPath(inkex.EffectExtension):
                             help="Number of samples along the selected path(s).")
         parser.add_argument("--amplitude", type=float, default=20,
                             help="Noise offset amplitude in document units.")
+        parser.add_argument(
+                    "--tangent_offset",
+                    type=float,
+                    default=50.0,
+                    help="Tangential offset as a percentage of the normal displacement "
+                         "(can be negative). 0 = pure normal offset.",
+                )
         parser.add_argument("--scale", type=float, default=1.2,
                             help="Noise frequency scale along the path.")
         parser.add_argument("--seed", type=int, default=42)
@@ -57,11 +64,18 @@ class NoiseOffsetPath(inkex.EffectExtension):
         parser.add_argument("--lacunarity", type=float, default=2.0)
         parser.add_argument("--gain", type=float, default=0.5)
         parser.add_argument(
-            "--tangent_offset",
+            "--noise_cutoff_low",
             type=float,
-            default=50.0,
-            help="Tangential offset as a percentage of the normal displacement "
-                 "(can be negative). 0 = pure normal offset.",
+            default=-1,
+            help="Lower bound of the noise-value window that produces a "
+                 "displacement. Values below this are zeroed out.",
+        )
+        parser.add_argument(
+            "--noise_cutoff_high",
+            type=float,
+            default=1,
+            help="Upper bound of the noise-value window that produces a "
+                 "displacement. Values above this are zeroed out.",
         )
         parser.add_argument(
             "--smooth",
@@ -100,6 +114,8 @@ class NoiseOffsetPath(inkex.EffectExtension):
         scale = self.options.scale
         # Tangent offset ratio: percentage -> fraction
         tangent_ratio = self.options.tangent_offset / 100.0
+        noise_cutoff_low = self.options.noise_cutoff_low
+        noise_cutoff_high = self.options.noise_cutoff_high
 
         any_converted = False
         selected = list(self.svg.selection.values())
@@ -164,11 +180,15 @@ class NoiseOffsetPath(inkex.EffectExtension):
 
                 v = self._sample_noise_batch(noise, nz_x, nz_y)
 
+                # noise cutoff zero out
+                v[~((v >= noise_cutoff_low) & (v <= noise_cutoff_high))] = 0.0
+
+
                 # ---- normal + tangential displacement ----
                 # Normal displacement: v * amp
                 # Tangential displacement: same scalar scaled by tangent_ratio
                 normal_disp = v[:, None] * amp
-                tangent_disp = (np.sqrt(np.abs(v)) * np.sign(v))[:, None] * amp * tangent_ratio
+                tangent_disp = np.sin(v * (math.pi / 2))[:, None] * amp * tangent_ratio
                 offset_pts = (
                     poly
                     + normals * normal_disp
