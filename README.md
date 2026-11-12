@@ -18,7 +18,7 @@ The extension does not generate new shapes — it **modifies the objects you sel
 
 1. Selected rectangles, ellipses, and polygons are first converted to paths automatically.
 2. Each path is sampled at `Sample points` evenly spaced positions along its arc length.
-3. At each sample point, the normal direction is computed and a noise value is used to push the point outward or inward along that normal.
+3. At each sample point, the normal direction is computed and a noise value — or, optionally, the noise gradient — is used to push the point outward or inward along that normal.
 4. The path is rebuilt from the displaced points (smooth curve or polyline) and written back to the original object or added as a new object.
 
 Closed paths sample the noise around a circle so the start and end match seamlessly. Open paths sample noise linearly along arc length, so the two ends are independent.
@@ -26,11 +26,10 @@ Closed paths sample the noise around a circle so the start and end match seamles
 ## Features
 
 - **Three noise types**: single-layer Simplex, fractal FBM (fractal Brownian motion), and Turbulence (absolute-value fractal).
-- **Automatic shape conversion**: rectangles, ellipses, circles, and polygons need no manual conversion.
+- **Optional gradient mode**: instead of displacing by the raw noise value, you can displace by the noise gradient. `magnitude` uses \(|\nabla n|\) (sharpens ridges and creases, good for torn / cell-wall looks).
 - **Closed and open paths**: seamless for closed paths, independent endpoints for open paths.
 - **Arc-length sampling**: `Sample points` are evenly distributed along the total path length, independent of the original Bézier segment lengths.
 - **Smooth or polyline output**: Catmull-Rom splines through every sample point, or straight-segment polylines.
-- **No external dependencies**: includes a lightweight Simplex Noise implementation, compatible with Inkscape's bundled Python.
 
 ## Install
 
@@ -61,9 +60,9 @@ Restart Inkscape. Requires Inkscape 1.x (Python 3 + `inkex`).
 | Octaves | Number of noise layers stacked for `FBM` / `Turbulence`. Higher = more detail, slower. Typically 3–6. |
 | Lacunarity | Frequency multiplier between octaves for `FBM` / `Turbulence`. Usually 2.0. Higher = finer detail scales. |
 | Gain | Amplitude decay between octaves for `FBM` / `Turbulence`. Usually 0.5. Higher = rougher, stronger high-frequency contribution. |
-| Gain | Amplitude decay between octaves for `FBM` / `Turbulence`. Usually 0.5. Higher = rougher, stronger high-frequency contribution. |
-| Noise cutoff low | higher = cutoff noise effect from inner side. |
-| Noise cutoff high | lower = cutoff noise effect from outer side. |
+| Use noise gradient | Off = displace by the raw noise value (default). On = displace by the gradient of the selected noise field. Works with `Simplex`, `FBM`, and `Turbulence` (analytic gradients, no extra sampling cost beyond the octave loop). |
+| Noise cutoff low | Noise values below this threshold are zeroed out (no displacement). Raise it to suppress inward displacement from the inner side. |
+| Noise cutoff high | Noise values above this threshold are zeroed out. Lower it to suppress outward displacement from the outer side. |
 | Smooth output | On = Catmull-Rom spline through every sample point (organic, no visible corners); Off = straight-segment polyline (crisp angular look, good for low-poly / crystalline styles). |
 
 > **Note:** `Octaves`, `Lacunarity`, and `Gain` only take effect when the noise type is `FBM` or `Turbulence`. They are ignored for `Simplex`.

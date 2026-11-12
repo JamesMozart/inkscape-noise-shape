@@ -64,6 +64,13 @@ class NoiseOffsetPath(inkex.EffectExtension):
         parser.add_argument("--lacunarity", type=float, default=2.0)
         parser.add_argument("--gain", type=float, default=0.5)
         parser.add_argument(
+            "--use_gradient",
+            type=inkex.Boolean,
+            default=False,
+            help="If true, use the noise gradient (projected onto the path normal) "
+                "instead of the raw noise value as displacement.",
+        )
+        parser.add_argument(
             "--noise_cutoff_low",
             type=float,
             default=-1,
@@ -102,6 +109,24 @@ class NoiseOffsetPath(inkex.EffectExtension):
                 gain=self.options.gain,
             )
         return noise.noise_batch(nx, ny)
+
+    def _sample_noise_gradient_batch(self, noise, nx, ny):
+        kind = self.options.noise_type
+        if kind == "fbm":
+            return noise.fbm_gradient_batch(
+                nx, ny,
+                octaves=self.options.octaves,
+                lacunarity=self.options.lacunarity,
+                gain=self.options.gain,
+            )
+        if kind == "turbulence":
+            return noise.turbulence_gradient_batch(
+                nx, ny,
+                octaves=self.options.octaves,
+                lacunarity=self.options.lacunarity,
+                gain=self.options.gain,
+            )
+        return noise.noise_gradient_batch(nx, ny)
 
     def effect(self):
         if not self.svg.selection:
@@ -170,7 +195,7 @@ class NoiseOffsetPath(inkex.EffectExtension):
 
                 # ---- vectorized noise coordinates ----
                 if closed:
-                    theta = (np.arange(n) / n_samples) * (2.0 * math.pi)
+                    theta = (np.arange(n) / n) * (2.0 * math.pi)
                     nz_x = np.cos(theta) * scale
                     nz_y = np.sin(theta) * scale
                 else:
@@ -178,15 +203,17 @@ class NoiseOffsetPath(inkex.EffectExtension):
                     nz_x = t * scale
                     nz_y = np.zeros_like(t)
 
-                v = self._sample_noise_batch(noise, nz_x, nz_y)
+                if self.options.use_gradient:
+                    gx, gy = self._sample_noise_gradient_batch(noise, nz_x, nz_y)
+                    v = np.hypot(gx, gy)
+                    vmin, vmax = float(v.min()), float(v.max())
+                    rng = vmax - vmin
+                    v = 2.0 * (v - vmin) / rng - 1.0 if rng > 0 else np.zeros_like(v)
+                else:
+                    v = self._sample_noise_batch(noise, nz_x, nz_y)
 
-                # noise cutoff zero out
                 v[~((v >= noise_cutoff_low) & (v <= noise_cutoff_high))] = 0.0
 
-
-                # ---- normal + tangential displacement ----
-                # Normal displacement: v * amp
-                # Tangential displacement: same scalar scaled by tangent_ratio
                 normal_disp = v[:, None] * amp
                 tangent_disp = np.sin(v * (math.pi / 2))[:, None] * amp * tangent_ratio
                 offset_pts = (
